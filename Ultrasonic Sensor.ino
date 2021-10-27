@@ -44,6 +44,7 @@ void setup() {
 
 // initialize serial port
   Serial.begin(57600);
+  analogWrite(PIN_LED, 255);
 
 // initialize last sampling time
   last_sampling_time = 0;
@@ -69,23 +70,19 @@ void loop() {
 
 // adjust servo position according to the USS read value
 
-if(dist_raw < 180.0) {
+if(dist_ema < 180.0) {
     myservo.writeMicroseconds(_DUTY_MIN);
+    analogWrite(PIN_LED, 225);
   }
-  else if(dist_raw < 360.0){
-    myservo.writeMicroseconds((dist_raw - 180.0)* 1850/180);
+  else if(dist_ema < 360.0){
+    myservo.writeMicroseconds((dist_ema - 180.0)* 1850/180);
+    analogWrite(PIN_LED, 0);
   }
   else {
     myservo.writeMicroseconds(_DUTY_MAX);
+    analogWrite(PIN_LED, 225);
   }
 
-if (dist_raw < dist_min || dist_raw > dist_max) {
-  analogWrite(PIN_LED, 225);
-}
-else {
-  analogWrite(PIN_LED, 0);
-}
-   
 // update last sampling time
   last_sampling_time += INTERVAL;
 }
