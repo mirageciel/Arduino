@@ -18,19 +18,19 @@
 // Servo range
 #define _DUTY_MIN 1150
 #define _DUTY_NEU 1300
-#define _DUTY_MAX 1400
+#define _DUTY_MAX 1380
 
 // Servo speed control
 #define _SERVO_ANGLE 30 // angle b/w DUTY_MAX and DUTY_MIN
 #define _SERVO_SPEED 30 // servo speed limit (deg/sec)
 
 // Event periods
-#define _INTERVAL_DIST 20 // distance sensor interval (ms)
-#define _INTERVAL_SERVO 20 // servo interval (ms)
+#define _INTERVAL_DIST 10 // distance sensor interval (ms)
+#define _INTERVAL_SERVO 10 // servo interval (ms)
 #define _INTERVAL_SERIAL 100 // serial interval (ms)
 
 // PID parameters
-#define _KP 0.1 // proportional gain *****
+#define _KP 0.3 // proportional gain *****
 #define _KI 0
 #define _KD 0
 
@@ -109,6 +109,8 @@ void setup() {
   // initialize global variables
   a = 68;
   b = 310;
+  last_sampling_time_dist = last_sampling_time_servo = last_sampling_time_serial = 0;
+  event_dist = event_servo = event_serial = false;
 
   // move servo to neutral position
   myservo.writeMicroseconds(_DUTY_NEU);
@@ -118,22 +120,24 @@ void setup() {
 
   // convert angle speed into duty change per interval
   duty_chg_per_interval = 5;
+  //duty_chg_per_interval = (float)(_DUTY_MAX-_DUTY_MIN) * _SERVO_SPEED / 180 * _INTERVAL_SERVO / 1000;
 }
 
 void loop() {
   // Event generator
-  last_sampling_time_servo = millis();
-  last_sampling_time_dist = millis();
-  last_sampling_time_serial = millis();
-  
-  if (last_sampling_time_servo >= _INTERVAL_SERVO) event_servo = true;
-  else event_servo = false;
-
-  if (last_sampling_time_dist >= _INTERVAL_DIST) event_dist = true;
-  else event_dist = false;
-  
-  if (last_sampling_time_serial >= _INTERVAL_SERIAL) event_serial = true;
-  else event_serial = false;
+  unsigned long time_curr = millis();
+  if(time_curr >= last_sampling_time_dist + _INTERVAL_DIST) {
+        last_sampling_time_dist += _INTERVAL_DIST;
+        event_dist = true;
+  }
+  if(time_curr >= last_sampling_time_servo + _INTERVAL_SERVO) {
+        last_sampling_time_servo += _INTERVAL_SERVO;
+        event_servo = true;
+  }
+  if(time_curr >= last_sampling_time_serial + _INTERVAL_SERIAL) {
+        last_sampling_time_serial += _INTERVAL_SERIAL;
+        event_serial = true;
+  }
 
   // Event handlers
   if (event_dist) {
@@ -164,6 +168,7 @@ void loop() {
 
   if (event_servo) {
     // adjust duty_curr toward duty_target by duty_chg_per_interval
+    event_servo = false;
     float angle_curr = myservo.read();
     duty_curr = 1000 + 5.55 * angle_curr;
     if (duty_curr != duty_target) duty_curr += (duty_chg_per_interval * control);
@@ -177,8 +182,8 @@ void loop() {
 
   if (event_serial) {
     event_serial = false;
-    //Serial.print("dist_ir:");
-    //Serial.print(dist_raw);
+    Serial.print("dist_ir:");
+    Serial.print(dist_mid);
     Serial.print(", pterm:");
     Serial.print(map(pterm, -1000, 1000, 510, 610));
     Serial.print(", duty_target:");
