@@ -7,10 +7,10 @@
 #define PIN_SERVO 10
 #define PIN_IR A0
 
-//FrameWork setting
+//Framework setting
 #define _DIST_TARGET 255
 #define _DIST_MIN 100
-#define _DIST_MAX 410
+#define _DIST_MAX 420
 
 // Distance sensor
 #define _DIST_ALPHA 0.5 // EMA filter is abled
@@ -25,15 +25,15 @@
 #define _SERVO_SPEED 1000 // servo speed limit (deg/sec)
 
 // Event periods
-#define _INTERVAL_DIST 10 // distance sensor interval (ms)
-#define _INTERVAL_SERVO 10 // servo interval (ms)
-#define _INTERVAL_SERIAL 10 // serial interval (ms)
+#define _INTERVAL_DIST 15 // distance sensor interval (ms)
+#define _INTERVAL_SERVO 15 // servo interval (ms)
+#define _INTERVAL_SERIAL 100 // serial interval (ms)
 
 // PID parameters
-#define _KP 1 // proportional gain *****
+#define _KP 3 // proportional gain *****
+#define _KD 69
 #define _KI 0.002
-#define _KD 20
-#define _ITERM_MAX 1
+#define _ITERM_MAX 10
 
 //global variables
 float alpha = _DIST_ALPHA;
@@ -47,7 +47,7 @@ Servo myservo;
 
 // Distance sensor
 float dist_target = _DIST_TARGET; // location to send the ball
-float dist_raw, dist_mid;
+float dist_raw, dist_mid, dist_ema;
 
 // Event periods
 unsigned long last_sampling_time_dist, last_sampling_time_servo,
@@ -84,7 +84,6 @@ float ir_distance(void) { // return value unit: mm
 }
 
 float ir_distance_filtered(void) { // return value unit: mm
-  // for now, just use ir_distance() without noise filter
   dist_raw = ir_distance();
   if (dist_index < 30) {
     dist_raw_list[dist_index] = dist_raw;
@@ -96,7 +95,8 @@ float ir_distance_filtered(void) { // return value unit: mm
   }
   sort(dist_raw_list, 30);
   float dist_mid = (dist_raw_list[15] + dist_raw_list[16]) / 2;
-  return dist_mid;
+  dist_ema = dist_raw * alpha + dist_mid * (1 - alpha);
+  return dist_ema;
 }
 
 void setup() {
@@ -107,11 +107,12 @@ void setup() {
   myservo.attach(PIN_SERVO);
 
   // initialize global variables
-  a = 68;
-  b = 310;
+  a = 71;
+  b = 385;
   last_sampling_time_dist = last_sampling_time_servo = last_sampling_time_serial = 0;
   event_dist = event_servo = event_serial = false;
-  error_prev = 0;
+  error_prev = dist_ema = 0;
+  duty_curr = _DUTY_NEU;
 
   // move servo to neutral position
   myservo.writeMicroseconds(_DUTY_NEU);
@@ -122,7 +123,6 @@ void setup() {
   // convert angle speed into duty change per interval
   duty_chg_per_interval = (float)(_DUTY_MAX-_DUTY_MIN) * _SERVO_SPEED / 180 * _INTERVAL_SERVO / 1000;
 }
-
 
 void loop() {
   // Event generator
@@ -151,8 +151,8 @@ void loop() {
     error_curr = dist_target - dist_mid;
     pterm = _KP * error_curr;
     dterm = _KD * (error_curr - error_prev);
-    iterm = _KI * error_curr;
-    control = pterm + dterm;
+    iterm += _KI * error_curr;
+    control = pterm + dterm + iterm;
 
     // duty_target = f(duty_neutral, control)
     duty_target = _DUTY_NEU + control; // 255mm에서의 각도
@@ -175,38 +175,35 @@ void loop() {
   if (event_servo) {
     // adjust duty_curr toward duty_target by duty_chg_per_interval
     event_servo = false;
-    float angle_curr = myservo.read();
-    duty_curr = 1000 + 5.55 * angle_curr;
     if (duty_target > duty_curr) {
-      duty_curr += duty_chg_per_interval * control;
-      if (duty_target < duty_curr) duty_curr = duty_target;
+      duty_curr += duty_chg_per_interval;
+      if (duty_curr > duty_target) duty_curr = duty_target;
     }
     else {
-      duty_curr += duty_chg_per_interval * control;
-      if (duty_target > duty_curr) duty_curr = duty_target;
+      duty_curr -= duty_chg_per_interval;
+      if (duty_curr < duty_target) duty_curr = duty_target;
     }
-
-    if (duty_curr > _DUTY_MAX) duty_curr = _DUTY_MAX;
-    else if (duty_curr < _DUTY_MIN) duty_curr = _DUTY_MIN;
 
     // update servo position
     myservo.writeMicroseconds(duty_curr);
   }
   
-  //if (event_serial) {
-    //event_serial = false;
-    Serial.print("dist_ir:");
-    Serial.println(dist_mid);
-    Serial.print(", pterm:");
+  if (event_serial) {
+    event_serial = false;
+    Serial.print("IR:");
+    Serial.print(dist_mid);
+    Serial.print(",T:");
+    Serial.print(dist_target);
+    Serial.print(",P:");
     Serial.print(map(pterm, -1000, 1000, 510, 610));
-    Serial.print(", dterm:");
+    Serial.print(",D:");
     Serial.print(map(dterm, -1000, 1000, 510, 610));
-    Serial.print(", iterm:");
-    Serial.print(map(pterm, -1000, 1000, 510, 610));
-    Serial.print(", duty_target:");
+    Serial.print(",I:");
+    Serial.print(map(iterm, -1000, 1000, 510, 610));
+    Serial.print(",DTT:");
     Serial.print(map(duty_target, 1000, 2000, 410, 510));
-    Serial.print(", duty_curr:");
+    Serial.print(",DTC:");
     Serial.print(map(duty_curr, 1000, 2000, 410, 510));
-    Serial.println(", Min:100, Low:200, dist_target:255, High:310, Max:410");
+    Serial.println(",-G:245,+G:265,m:0,M:800");
   }
 }
