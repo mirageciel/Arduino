@@ -7,32 +7,32 @@
 #define PIN_SERVO 10
 #define PIN_IR A0
 
-//FrameWork setting
+// Framework setting
 #define _DIST_TARGET 255
 #define _DIST_MIN 100
-#define _DIST_MAX 410
+#define _DIST_MAX 420
 
 // Distance sensor
-#define _DIST_ALPHA 0.5 // EMA filter is abled
+#define _DIST_ALPHA 0.5
 
 // Servo range
 #define _DUTY_MIN 1070
 #define _DUTY_NEU 1285
-#define _DUTY_MAX 1500
+#define _DUTY_MAX 1550
 
 // Servo speed control
-#define _SERVO_ANGLE 30 // angle b/w DUTY_MAX and DUTY_MIN
-#define _SERVO_SPEED 500 // servo speed limit (deg/sec)
+#define _SERVO_ANGLE 30
+#define _SERVO_SPEED 1000
 
 // Event periods
-#define _INTERVAL_DIST 4 // distance sensor interval (ms)
-#define _INTERVAL_SERVO 4 // servo interval (ms)
-#define _INTERVAL_SERIAL 10 // serial interval (ms)
+#define _INTERVAL_DIST 15
+#define _INTERVAL_SERVO 15
+#define _INTERVAL_SERIAL 100
 
 // PID parameters
-#define _KP 1 // proportional gain *****
-#define _KD 20
-#define _KI 0.02
+#define _KP 3
+#define _KD 69
+#define _KI 0.002
 #define _ITERM_MAX 10
 
 //global variables
@@ -47,7 +47,7 @@ Servo myservo;
 
 // Distance sensor
 float dist_target = _DIST_TARGET; // location to send the ball
-float dist_raw, dist_mid;
+float dist_raw, dist_mid, dist_ema;
 
 // Event periods
 unsigned long last_sampling_time_dist, last_sampling_time_servo,
@@ -84,7 +84,6 @@ float ir_distance(void) { // return value unit: mm
 }
 
 float ir_distance_filtered(void) { // return value unit: mm
-  // for now, just use ir_distance() without noise filter
   dist_raw = ir_distance();
   if (dist_index < 30) {
     dist_raw_list[dist_index] = dist_raw;
@@ -96,22 +95,24 @@ float ir_distance_filtered(void) { // return value unit: mm
   }
   sort(dist_raw_list, 30);
   float dist_mid = (dist_raw_list[15] + dist_raw_list[16]) / 2;
-  return dist_mid;
+  dist_ema = dist_raw * alpha + dist_mid * (1 - alpha);
+  return dist_ema;
 }
 
 void setup() {
   // initialize GPIO pins for LED and attach servo
   pinMode(PIN_LED, OUTPUT);
   digitalWrite(PIN_LED, 1);
-
+  
   myservo.attach(PIN_SERVO);
 
   // initialize global variables
-  a = 94;
+  a = 71;
   b = 385;
   last_sampling_time_dist = last_sampling_time_servo = last_sampling_time_serial = 0;
   event_dist = event_servo = event_serial = false;
-  error_prev = 0;
+  error_prev = dist_ema = 0;
+  duty_curr = _DUTY_NEU;
 
   // move servo to neutral position
   myservo.writeMicroseconds(_DUTY_NEU);
@@ -120,9 +121,8 @@ void setup() {
   Serial.begin(57600);
 
   // convert angle speed into duty change per interval
-  duty_chg_per_interval = (float)(_DUTY_MAX-_DUTY_MIN) * _SERVO_SPEED / 180 * _INTERVAL_SERVO / 1000;
+  duty_chg_per_interval = (float)(_DUTY_MAX - _DUTY_MIN) * _SERVO_SPEED / 180 * _INTERVAL_SERVO / 1000;
 }
-
 
 void loop() {
   // Event generator
@@ -148,18 +148,18 @@ void loop() {
     dist_mid = ir_distance_filtered();
 
     // PID control logic
-    error_curr = dist_target - dist_mid;
+    error_curr = dist_target - dist_raw;
     pterm = _KP * error_curr;
     dterm = _KD * (error_curr - error_prev);
-    iterm = _KI * error_curr;
+    iterm += _KI * error_curr;
     control = pterm + dterm + iterm;
 
     // duty_target = f(duty_neutral, control)
     duty_target = _DUTY_NEU + control; // 255mm에서의 각도
 
     // Limit duty_target within the range of [_DUTY_MIN, _DUTY_MAX]
-    if (duty_target < _DUTY_MIN) duty_target = _DUTY_MIN;
-    if (duty_target > _DUTY_MAX) duty_target = _DUTY_MAX;
+    if (duty_target < _DUTY_MIN)duty_target = _DUTY_MIN;
+    if (duty_target > _DUTY_MAX)duty_target = _DUTY_MAX;
 
     // update error_prev
     error_prev = error_curr;
@@ -175,26 +175,19 @@ void loop() {
   if (event_servo) {
     // adjust duty_curr toward duty_target by duty_chg_per_interval
     event_servo = false;
-    float angle_curr = myservo.read();
-    duty_curr = 1000 + 5.55 * angle_curr;
     if (duty_target > duty_curr) {
-      duty_curr += duty_chg_per_interval * control;
-      if (duty_target < duty_curr) duty_curr = duty_target;
+      duty_curr += duty_chg_per_interval;
+      if (duty_curr > duty_target) duty_curr = duty_target;
     }
     else {
-      duty_curr += duty_chg_per_interval * control;
-      if (duty_target > duty_curr) duty_curr = duty_target;
+      duty_curr -= duty_chg_per_interval;
+      if (duty_curr < duty_target) duty_curr = duty_target;
     }
 
-    if (duty_curr > _DUTY_MAX) duty_curr = _DUTY_MAX;
-    else if (duty_curr < _DUTY_MIN) duty_curr = _DUTY_MIN;
-
-    if (dist_mid == _DIST_TARGET) duty_curr = _DUTY_NEU;
-    
     // update servo position
     myservo.writeMicroseconds(duty_curr);
   }
-  
+
   if (event_serial) {
     event_serial = false;
     Serial.print("IR:");
